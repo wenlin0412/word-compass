@@ -1,0 +1,1764 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>指令連線 · Word Compass</title>
+<!-- MQTT.js: 多重 CDN fallback。v4.3.7 是最後一版內建 browser-ready bundle 的版本 -->
+<script>
+  // 依序嘗試多個 CDN，避免單一 CDN 失敗導致整個遊戲不能玩
+  (function loadMqtt() {
+    const sources = [
+      'https://cdn.jsdelivr.net/npm/mqtt@4.3.7/dist/mqtt.min.js',
+      'https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js',
+      'https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js'
+    ];
+    let idx = 0;
+    function tryNext() {
+      if (idx >= sources.length) {
+        document.addEventListener('DOMContentLoaded', () => {
+          alert('無法載入 MQTT 函式庫，請檢查網路連線後重新整理。');
+        });
+        return;
+      }
+      const s = document.createElement('script');
+      s.src = sources[idx++];
+      s.onload = () => { window.__mqttReady = true; console.log('MQTT.js loaded from', s.src); };
+      s.onerror = () => { console.warn('MQTT CDN failed:', s.src); tryNext(); };
+      document.head.appendChild(s);
+    }
+    tryNext();
+  })();
+</script>
+<style>
+  :root {
+    --bg-deep: #0f1419;
+    --bg-soft: #1a2128;
+    --bg-card: #232b34;
+    --border: #2f3a44;
+    --text-primary: #e6edf3;
+    --text-secondary: #8b949e;
+    --text-muted: #6e7681;
+    --accent: #5eead4;
+    --accent-dark: #2dd4bf;
+    --danger: #f87171;
+    --warn: #fbbf24;
+    --success: #4ade80;
+    --hex-blue: #6ba8d4;
+    --hex-gray: #6b7280;
+    --hex-yellow: #fbbf24;
+    --hex-green: #22c55e;
+    --hex-white: #f3f4f6;
+    --hex-empty: #475569;
+    --hex-anchor: #c084fc;
+    --font-display: 'Noto Serif TC', 'Songti TC', '宋體', serif;
+    --font-body: 'Noto Sans TC', '微軟正黑體', 'PingFang TC', sans-serif;
+    --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    background: var(--bg-deep);
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    font-size: 14px;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse at top left, rgba(94, 234, 212, 0.08), transparent 50%),
+      radial-gradient(ellipse at bottom right, rgba(192, 132, 252, 0.06), transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ============ Lobby ============ */
+  .lobby {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 24px;
+  }
+
+  .lobby-card {
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 40px;
+    max-width: 480px;
+    width: 100%;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+  }
+
+  .lobby-title {
+    font-family: var(--font-display);
+    font-size: 32px;
+    font-weight: 600;
+    letter-spacing: 4px;
+    margin-bottom: 6px;
+    background: linear-gradient(135deg, var(--accent) 0%, #c084fc 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .lobby-sub {
+    color: var(--text-secondary);
+    font-size: 13px;
+    margin-bottom: 32px;
+    letter-spacing: 1px;
+  }
+
+  .lobby-tabs {
+    display: flex;
+    gap: 0;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .tab-btn {
+    flex: 1;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    padding: 12px 0;
+    cursor: pointer;
+    font-size: 14px;
+    font-family: inherit;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+  }
+
+  .tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  .form-group {
+    margin-bottom: 16px;
+  }
+
+  .form-label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+    letter-spacing: 1px;
+  }
+
+  .form-input, .form-select {
+    width: 100%;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 14px;
+    transition: border-color 0.2s;
+  }
+
+  .form-input:focus, .form-select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 11px 20px;
+    border: none;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: var(--bg-card);
+    color: var(--text-primary);
+  }
+
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%);
+    color: var(--bg-deep);
+    font-weight: 600;
+  }
+
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(94, 234, 212, 0.3); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .btn-block { width: 100%; }
+
+  .status-line {
+    margin-top: 16px;
+    padding: 10px 14px;
+    background: var(--bg-card);
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+  }
+
+  .status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 8px;
+    background: var(--text-muted);
+  }
+  .status-dot.connected { background: var(--success); box-shadow: 0 0 8px var(--success); }
+  .status-dot.connecting { background: var(--warn); animation: pulse 1.5s infinite; }
+  .status-dot.error { background: var(--danger); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* ============ Game Layout ============ */
+  .game {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .game.hidden { display: none; }
+  .lobby.hidden { display: none; }
+
+  /* Top Bar */
+  .top-bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 20px;
+    background: var(--bg-soft);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .brand {
+    font-family: var(--font-display);
+    font-size: 18px;
+    letter-spacing: 3px;
+    color: var(--accent);
+  }
+
+  .room-info {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-secondary);
+    padding: 4px 10px;
+    background: var(--bg-card);
+    border-radius: 4px;
+  }
+
+  .stat-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: var(--bg-card);
+    border-radius: 20px;
+    font-size: 12px;
+  }
+
+  .stat-pill .label {
+    color: var(--text-muted);
+    letter-spacing: 1px;
+  }
+
+  .stat-pill .value {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .stat-pill.score .value { color: var(--accent); font-size: 16px; }
+  .stat-pill.turns .value { color: var(--warn); }
+  .stat-pill.synergy .value { color: #c084fc; }
+
+  .role-badge {
+    margin-left: auto;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 2px;
+  }
+
+  .role-badge.commander { background: rgba(94, 234, 212, 0.15); color: var(--accent); border: 1px solid var(--accent); }
+  .role-badge.pathfinder { background: rgba(251, 191, 36, 0.15); color: var(--warn); border: 1px solid var(--warn); }
+
+  /* Main Stage */
+  .stage {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    overflow: hidden;
+  }
+
+  .map-zone {
+    position: relative;
+    overflow: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+
+  .side-panel {
+    background: var(--bg-soft);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Hex Map */
+  .hex-grid {
+    position: relative;
+  }
+
+  .hex-cell {
+    position: absolute;
+    cursor: default;
+    transition: transform 0.15s;
+  }
+
+  .hex-cell.clickable { cursor: pointer; }
+  /* Hover 光暈效果：取代縮放，避免位移視覺干擾 */
+  .hex-cell.clickable:hover .hex-poly {
+    filter: drop-shadow(0 0 10px var(--accent)) drop-shadow(0 0 18px rgba(94, 234, 212, 0.5));
+    stroke: var(--accent);
+    stroke-width: 3.5;
+  }
+  .hex-cell.disabled { opacity: 0.55; cursor: not-allowed; }
+
+  .hex-poly {
+    transition: fill 0.3s, stroke 0.2s, filter 0.2s;
+  }
+
+  .hex-cell.anchor .hex-poly { stroke: var(--hex-anchor); stroke-width: 3; }
+
+  /* 最近寫入的格子：強烈脈動光暈，雙方都能立即看到落點 */
+  .hex-cell.recent .hex-poly {
+    stroke: var(--accent);
+    stroke-width: 3.5;
+    animation: recent-pulse 1.6s ease-out 2;
+  }
+
+  @keyframes recent-pulse {
+    0%   { filter: drop-shadow(0 0 4px var(--accent)) drop-shadow(0 0 8px var(--accent)); }
+    50%  { filter: drop-shadow(0 0 16px var(--accent)) drop-shadow(0 0 28px var(--accent)); }
+    100% { filter: drop-shadow(0 0 6px var(--accent)); }
+  }
+
+  /* 翻開分數浮現效果 */
+  .score-popup {
+    font-family: var(--font-mono);
+    font-size: 18px;
+    font-weight: 700;
+    text-anchor: middle;
+    dominant-baseline: central;
+    pointer-events: none;
+    animation: score-rise 1.8s ease-out forwards;
+  }
+  .score-popup.pos { fill: var(--success); }
+  .score-popup.neg { fill: var(--danger); }
+  .score-popup.zero { fill: var(--text-muted); }
+
+  @keyframes score-rise {
+    0%   { opacity: 0; transform: translateY(0); }
+    20%  { opacity: 1; transform: translateY(-8px); }
+    80%  { opacity: 1; transform: translateY(-24px); }
+    100% { opacity: 0; transform: translateY(-32px); }
+  }
+
+  .hex-text {
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 600;
+    text-anchor: middle;
+    dominant-baseline: central;
+    pointer-events: none;
+    fill: var(--bg-deep);
+  }
+
+  /* Side Panel sections */
+  .panel-section {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .panel-title {
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+    text-transform: uppercase;
+  }
+
+  .panel-section.flex-grow { flex: 1; overflow-y: auto; }
+
+  .word-display {
+    background: var(--bg-deep);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    text-align: center;
+    font-family: var(--font-display);
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: 4px;
+    color: var(--accent);
+    min-height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .word-display.empty {
+    color: var(--text-muted);
+    font-size: 13px;
+    letter-spacing: 1px;
+    font-family: var(--font-body);
+    font-weight: 400;
+  }
+
+  .input-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .input-row .form-input { flex: 1; }
+
+  .action-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  /* Log */
+  .log-list {
+    list-style: none;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .log-list li {
+    padding: 6px 0;
+    border-bottom: 1px dashed var(--border);
+    line-height: 1.5;
+  }
+
+  .log-list li:last-child { border-bottom: none; }
+
+  .log-time {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    margin-right: 8px;
+  }
+
+  .log-score-pos { color: var(--success); font-weight: 600; }
+  .log-score-neg { color: var(--danger); font-weight: 600; }
+  .log-score-zero { color: var(--text-muted); }
+
+  /* Bottom Bar - Player Info */
+  .bottom-bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 20px;
+    background: var(--bg-soft);
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .player-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: var(--bg-card);
+    border-radius: 4px;
+    font-family: var(--font-mono);
+  }
+
+  .player-tag.you { background: rgba(94, 234, 212, 0.15); color: var(--accent); }
+
+  /* Modal */
+  .modal-bg {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    backdrop-filter: blur(4px);
+  }
+
+  .modal-bg.hidden { display: none; }
+
+  .modal {
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 40px;
+    max-width: 480px;
+    width: 90%;
+    text-align: center;
+  }
+
+  .modal-title {
+    font-family: var(--font-display);
+    font-size: 28px;
+    margin-bottom: 8px;
+  }
+
+  .modal-title.win { color: var(--success); }
+  .modal-title.lose { color: var(--danger); }
+
+  .modal-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin: 20px 0;
+  }
+
+  .modal-stat {
+    background: var(--bg-card);
+    padding: 12px;
+    border-radius: 8px;
+  }
+
+  .modal-stat .label { font-size: 11px; color: var(--text-muted); letter-spacing: 1px; }
+  .modal-stat .value { font-family: var(--font-mono); font-size: 22px; color: var(--accent); margin-top: 4px; }
+
+  /* Toast */
+  .toast {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 12px 20px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    z-index: 200;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    font-size: 13px;
+    animation: slide-down 0.3s;
+  }
+
+  .toast.error { border-color: var(--danger); color: var(--danger); }
+  .toast.success { border-color: var(--success); color: var(--success); }
+  .toast.warn { border-color: var(--warn); color: var(--warn); }
+
+  @keyframes slide-down {
+    from { transform: translateX(-50%) translateY(-20px); opacity: 0; }
+    to { transform: translateX(-50%) translateY(0); opacity: 1; }
+  }
+
+  /* Color Legend */
+  .legend {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+    margin-top: 8px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+
+  .legend-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+  }
+
+  /* Connection indicator */
+  .conn-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-left: auto;
+  }
+
+  @media (max-width: 900px) {
+    .stage { grid-template-columns: 1fr; }
+    .side-panel { border-left: none; border-top: 1px solid var(--border); max-height: 40vh; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ LOBBY ============ -->
+<div id="lobby" class="lobby">
+  <div class="lobby-card">
+    <div class="lobby-title">WORD COMPASS</div>
+    <div class="lobby-sub">指 令 連 線 · 雙 人 合 作</div>
+
+    <div class="lobby-tabs">
+      <button class="tab-btn active" data-tab="create">建立房間</button>
+      <button class="tab-btn" data-tab="join">加入房間</button>
+    </div>
+
+    <div id="tab-create">
+      <div class="form-group">
+        <label class="form-label">你的暱稱</label>
+        <input id="create-nick" class="form-input" maxlength="10" placeholder="例：阿明" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">難度</label>
+        <select id="create-diff" class="form-select">
+          <option value="easy">輕鬆　20 回合 · 目標 6 分</option>
+          <option value="normal" selected>標準　15 回合 · 目標 8 分</option>
+          <option value="hard">挑戰　12 回合 · 目標 10 分</option>
+          <option value="hell">地獄　10 回合 · 目標 12 分</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">你想擔任的角色</label>
+        <select id="create-role" class="form-select">
+          <option value="commander" selected>指令者（看得到地圖）</option>
+          <option value="pathfinder">探路者（依指令填字）</option>
+        </select>
+      </div>
+      <button id="btn-create" class="btn btn-primary btn-block">建立房間</button>
+    </div>
+
+    <div id="tab-join" style="display:none">
+      <div class="form-group">
+        <label class="form-label">你的暱稱</label>
+        <input id="join-nick" class="form-input" maxlength="10" placeholder="例：小華" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">房間代碼（4 碼）</label>
+        <input id="join-code" class="form-input" maxlength="4" placeholder="例：A3F2" style="text-transform:uppercase; letter-spacing:8px; text-align:center; font-family:var(--font-mono); font-size:18px" />
+      </div>
+      <button id="btn-join" class="btn btn-primary btn-block">加入房間</button>
+    </div>
+
+    <div class="status-line">
+      <span id="conn-dot" class="status-dot"></span>
+      <span id="conn-text">尚未連線</span>
+    </div>
+  </div>
+</div>
+
+<!-- ============ GAME ============ -->
+<div id="game" class="game hidden">
+  <div class="top-bar">
+    <div class="brand">COMPASS</div>
+    <div class="room-info">房間 <span id="room-code">----</span></div>
+    <div class="stat-pill score"><span class="label">分數</span><span class="value"><span id="stat-score">0</span> / <span id="stat-target">8</span></span></div>
+    <div class="stat-pill turns"><span class="label">回合</span><span class="value"><span id="stat-turns">15</span></span></div>
+    <div class="stat-pill synergy"><span class="label">默契</span><span class="value"><span id="stat-syn">0</span> / 3</span></div>
+    <div id="role-badge" class="role-badge"></div>
+  </div>
+
+  <div class="stage">
+    <div class="map-zone">
+      <svg id="hex-grid" class="hex-grid"></svg>
+    </div>
+
+    <div class="side-panel">
+      <div class="panel-section">
+        <div class="panel-title">當前指令</div>
+        <div id="word-display" class="word-display empty">等待指令者出題…</div>
+      </div>
+
+      <div id="commander-controls" class="panel-section" style="display:none">
+        <div class="panel-title">出題（送出指令詞）</div>
+        <div class="input-row">
+          <input id="cmd-input" class="form-input" maxlength="6" placeholder="例：花襯衫" />
+          <button id="cmd-send" class="btn btn-primary">送出</button>
+        </div>
+        <div class="action-row">
+          <button id="cmd-hint" class="btn">使用提示（揭一格）</button>
+        </div>
+      </div>
+
+      <div id="pathfinder-controls" class="panel-section" style="display:none">
+        <div class="panel-title">操作</div>
+        <div class="action-row">
+          <button id="pf-refuse" class="btn">拒絕指令（限 1 次）</button>
+          <button id="pf-forfeit" class="btn">宣告流局</button>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-title">顏色說明</div>
+        <div class="legend">
+          <div class="legend-item"><span class="legend-swatch" style="background:var(--hex-blue)"></span>藍色 / 0 分</div>
+          <div class="legend-item"><span class="legend-swatch" style="background:var(--hex-gray)"></span>灰色 / −1</div>
+          <div class="legend-item"><span class="legend-swatch" style="background:var(--hex-yellow)"></span>黃色 / +1</div>
+          <div class="legend-item"><span class="legend-swatch" style="background:var(--hex-green)"></span>綠色 / +2</div>
+          <div class="legend-item"><span class="legend-swatch" style="background:var(--hex-white); border:1px solid var(--border)"></span>未翻開</div>
+          <div class="legend-item"><span class="legend-swatch" style="background:var(--hex-anchor)"></span>起始錨點</div>
+        </div>
+      </div>
+
+      <div class="panel-section flex-grow">
+        <div class="panel-title">紀錄</div>
+        <ul id="log-list" class="log-list"></ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="bottom-bar">
+    <span id="player-self" class="player-tag you">YOU</span>
+    <span id="player-other" class="player-tag">等待對手…</span>
+    <span class="conn-badge"><span id="game-conn-dot" class="status-dot connected"></span><span id="game-conn-text">連線中</span></span>
+  </div>
+</div>
+
+<!-- Modal -->
+<div id="modal" class="modal-bg hidden">
+  <div class="modal">
+    <div id="modal-title" class="modal-title">遊戲結束</div>
+    <div id="modal-msg" style="color:var(--text-secondary);font-size:13px"></div>
+    <div class="modal-stats">
+      <div class="modal-stat"><div class="label">最終分數</div><div class="value" id="final-score">-</div></div>
+      <div class="modal-stat"><div class="label">使用回合</div><div class="value" id="final-turns">-</div></div>
+      <div class="modal-stat"><div class="label">最佳連擊</div><div class="value" id="final-combo">-</div></div>
+      <div class="modal-stat"><div class="label">評等</div><div class="value" id="final-rank">-</div></div>
+    </div>
+    <button id="modal-restart" class="btn btn-primary btn-block">返回大廳</button>
+  </div>
+</div>
+
+<div id="toast-zone"></div>
+
+<script>
+// ===========================================================================
+// 1) Constants & Configuration
+// ===========================================================================
+const MQTT_BROKER = 'wss://broker.emqx.io:8084/mqtt';
+const TOPIC_PREFIX = 'word-compass-v1';
+
+const DIFFICULTY = {
+  easy:   { turns: 20, target: 6 },
+  normal: { turns: 15, target: 8 },
+  hard:   { turns: 12, target: 10 },
+  hell:   { turns: 10, target: 12 }
+};
+
+// 顏色配置（37 格）
+const COLOR_DIST = {
+  blue: 16,    // 0 分
+  gray: 8,     // -1
+  yellow: 4,   // +1
+  green: 9     // +2
+};
+
+const COLOR_SCORE = { blue: 0, gray: -1, yellow: 1, green: 2 };
+const COLOR_HEX = { blue: '#6ba8d4', gray: '#6b7280', yellow: '#fbbf24', green: '#22c55e', empty: '#f3f4f6' };
+
+// 起始錨點預設詞庫（隨機抽 3 個）
+const ANCHOR_WORDS = [
+  '花襯衫','鋼琴','窗戶','咖啡','燈塔','腳踏車','風箏','信封','磁鐵','沙漏',
+  '指南針','望遠鏡','口琴','蝴蝶結','石頭','麵包','瓷器','畫筆','繩索','地圖',
+  '蠟燭','鏡子','羽毛','鈴鐺','沙發','時鐘','旗幟','戒指','船帆','氣球'
+];
+
+// 禁用字（規則檢查）
+const FORBIDDEN_CHARS = new Set([
+  '上','下','左','右','東','南','西','北','中',
+  '紅','白','黃','灰','藍','綠','彩',
+  '加','扣','陷','阱','格','排','號',
+  '安','全','放','這','那','快','別'
+]);
+
+// 六角座標：使用 axial (q, r) 座標系
+// 37 格採 hex flat-top 排列，半徑 3
+// 鄰居方向（flat-top）
+const HEX_DIRS = [
+  {q: 1, r: 0}, {q: 1, r: -1}, {q: 0, r: -1},
+  {q: -1, r: 0}, {q: -1, r: 1}, {q: 0, r: 1}
+];
+
+// ===========================================================================
+// 2) Hex Grid Generation (radius=3 → 37 cells)
+// ===========================================================================
+function generateHexLayout() {
+  const cells = [];
+  const radius = 3;
+  for (let q = -radius; q <= radius; q++) {
+    const r1 = Math.max(-radius, -q - radius);
+    const r2 = Math.min(radius, -q + radius);
+    for (let r = r1; r <= r2; r++) {
+      cells.push({ q, r, id: cells.length });
+    }
+  }
+  return cells;
+}
+
+function axialKey(q, r) { return `${q},${r}`; }
+
+function findNeighbors(cells) {
+  const lookup = new Map();
+  cells.forEach(c => lookup.set(axialKey(c.q, c.r), c.id));
+  return cells.map(c => HEX_DIRS.map(d => lookup.get(axialKey(c.q + d.q, c.r + d.r))).filter(x => x !== undefined));
+}
+
+// Pixel positioning (pointy-top hex)
+function axialToPixel(q, r, size) {
+  const x = size * Math.sqrt(3) * (q + r / 2);
+  const y = size * 1.5 * r;
+  return { x, y };
+}
+
+// ===========================================================================
+// 3) Seeded Random (so both players get the same map)
+// ===========================================================================
+function mulberry32(seed) {
+  return function() {
+    let t = seed += 0x6D2B79F5;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+function seededShuffle(arr, rng) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// ===========================================================================
+// 4) Game State Initialization
+// ===========================================================================
+function buildInitialMap(seed) {
+  const rng = mulberry32(seed);
+  const layout = generateHexLayout(); // 37 cells with axial coords
+  const neighbors = findNeighbors(layout);
+
+  // 1. Pick 3 connected anchor cells FIRST（錨點位置先決定）
+  const anchors = pickConnectedTriple(layout, neighbors, rng);
+
+  // 2. Assign colors，強制錨點所在的 3 格為藍色（0 分）
+  //    從顏色池中先扣掉 3 個藍色給錨點，剩餘 34 格隨機分配
+  const colorPool = [];
+  for (const [c, n] of Object.entries(COLOR_DIST)) for (let i = 0; i < n; i++) colorPool.push(c);
+  // 扣除 3 個藍色（給錨點）
+  let removed = 0;
+  const remainingPool = colorPool.filter(c => {
+    if (c === 'blue' && removed < 3) { removed++; return false; }
+    return true;
+  });
+  const shuffledNonAnchor = seededShuffle(remainingPool, rng);
+
+  // 將剩餘顏色填入非錨點格
+  const colorMap = new Array(layout.length);
+  for (const aId of anchors) colorMap[aId] = 'blue';
+  let cursor = 0;
+  for (let i = 0; i < layout.length; i++) {
+    if (colorMap[i] === undefined) {
+      colorMap[i] = shuffledNonAnchor[cursor++];
+    }
+  }
+
+  // 3. Pick 3 anchor words
+  const shuffledWords = seededShuffle(ANCHOR_WORDS, rng);
+  const anchorWords = shuffledWords.slice(0, 3);
+
+  // 4. Build cells
+  const cells = layout.map((c, i) => {
+    const anchorIdx = anchors.indexOf(i);
+    return {
+      id: i,
+      q: c.q,
+      r: c.r,
+      color: colorMap[i],
+      neighbors: neighbors[i],
+      isAnchor: anchorIdx >= 0,
+      word: anchorIdx >= 0 ? anchorWords[anchorIdx] : null,
+      revealed: anchorIdx >= 0
+    };
+  });
+
+  return cells;
+}
+
+function pickConnectedTriple(layout, neighbors, rng) {
+  // pick a random starting cell, then BFS-grow to 3 connected
+  while (true) {
+    const startId = Math.floor(rng() * layout.length);
+    const visited = new Set([startId]);
+    const order = [startId];
+    let cur = startId;
+    while (order.length < 3) {
+      const candidates = neighbors[cur].filter(n => !visited.has(n));
+      if (candidates.length === 0) {
+        // backtrack to first cell
+        cur = order[0];
+        const c2 = neighbors[cur].filter(n => !visited.has(n));
+        if (c2.length === 0) break;
+        const pick = c2[Math.floor(rng() * c2.length)];
+        visited.add(pick);
+        order.push(pick);
+        cur = pick;
+      } else {
+        const pick = candidates[Math.floor(rng() * candidates.length)];
+        visited.add(pick);
+        order.push(pick);
+        cur = pick;
+      }
+    }
+    if (order.length === 3) return order;
+  }
+}
+
+// ===========================================================================
+// 5) Global State
+// ===========================================================================
+const App = {
+  mqtt: null,
+  myId: 'p_' + Math.random().toString(36).slice(2, 8),
+  myNick: '',
+  myRole: null,        // 'commander' | 'pathfinder'
+  roomCode: null,
+  isHost: false,       // host = authoritative end (does scoring)
+  partnerId: null,
+  partnerNick: null,
+
+  game: null           // game state (see below)
+};
+
+function newGameState(diff, seed) {
+  const diffCfg = DIFFICULTY[diff];
+  return {
+    diff,
+    seed,
+    cells: buildInitialMap(seed),
+    score: 0,
+    target: diffCfg.target,
+    turnsRemaining: diffCfg.turns,
+    totalTurns: diffCfg.turns,
+    comboCount: 0,
+    bestCombo: 0,
+    synergyPoints: 0,
+    hintsUsed: 0,
+    refusalUsed: false,
+    pendingWord: null,
+    usedWords: new Set(),
+    phase: 'commanding',  // commanding | placing | resolving | ended
+    lastEvent: null,
+    history: []
+  };
+}
+
+// ===========================================================================
+// 6) MQTT Connection
+// ===========================================================================
+function connectMqtt(onConnect) {
+  // 等待 MQTT.js CDN 載入完成
+  if (typeof mqtt === 'undefined') {
+    setConnStatus('connecting', '等待 MQTT 函式庫載入…');
+    let waited = 0;
+    const interval = setInterval(() => {
+      waited += 100;
+      if (typeof mqtt !== 'undefined') {
+        clearInterval(interval);
+        connectMqtt(onConnect);
+      } else if (waited > 10000) {
+        clearInterval(interval);
+        setConnStatus('error', 'MQTT 函式庫載入失敗，請重新整理');
+      }
+    }, 100);
+    return;
+  }
+
+  setConnStatus('connecting', '連線中…');
+  const client = mqtt.connect(MQTT_BROKER, {
+    clientId: 'compass_' + App.myId,
+    clean: true,
+    connectTimeout: 8000,
+    reconnectPeriod: 3000,
+    keepalive: 30
+  });
+
+  client.on('connect', () => {
+    setConnStatus('connected', '已連線到 broker');
+    App.mqtt = client;
+    onConnect && onConnect();
+  });
+
+  client.on('error', (e) => {
+    setConnStatus('error', '連線錯誤：' + e.message);
+  });
+
+  client.on('reconnect', () => {
+    setConnStatus('connecting', '重新連線中…');
+  });
+
+  client.on('message', (topic, payload) => {
+    try {
+      const msg = JSON.parse(payload.toString());
+      handleMqttMessage(topic, msg);
+    } catch (e) {
+      console.error('Bad MQTT msg', e);
+    }
+  });
+
+  return client;
+}
+
+function publish(subTopic, msg) {
+  if (!App.mqtt || !App.roomCode) return;
+  const t = `${TOPIC_PREFIX}/${App.roomCode}/${subTopic}`;
+  App.mqtt.publish(t, JSON.stringify({ ...msg, _from: App.myId }), { qos: 1 });
+}
+
+function subscribeRoom() {
+  if (!App.mqtt || !App.roomCode) return;
+  const t = `${TOPIC_PREFIX}/${App.roomCode}/+`;
+  App.mqtt.subscribe(t, { qos: 1 });
+}
+
+// ===========================================================================
+// 7) Message Handling
+// ===========================================================================
+function handleMqttMessage(topic, msg) {
+  if (msg._from === App.myId) return; // ignore our own messages
+  const parts = topic.split('/');
+  const subTopic = parts[parts.length - 1];
+
+  switch (subTopic) {
+    case 'join':       return onJoin(msg);
+    case 'init':       return onInit(msg);
+    case 'command':    return onCommand(msg);
+    case 'place':      return onPlace(msg);
+    case 'result':     return onResult(msg);
+    case 'refuse':     return onRefuse(msg);
+    case 'forfeit':    return onForfeit(msg);
+    case 'hint':       return onHint(msg);
+    case 'sync-req':   return onSyncReq(msg);
+    case 'sync-resp':  return onSyncResp(msg);
+    case 'end':        return onEnd(msg);
+  }
+}
+
+// Host handles incoming join
+function onJoin(msg) {
+  if (!App.isHost) return;
+  if (App.partnerId) return; // already paired
+  App.partnerId = msg._from;
+  App.partnerNick = msg.nick;
+  updatePlayerBar();
+  // Send init to guest
+  publish('init', {
+    seed: App.game.seed,
+    diff: App.game.diff,
+    hostRole: App.myRole,
+    hostNick: App.myNick,
+    guestRole: App.myRole === 'commander' ? 'pathfinder' : 'commander'
+  });
+  toast('success', `${msg.nick} 已加入！`);
+  syncUI();
+}
+
+// Guest receives init
+function onInit(msg) {
+  if (App.isHost) return;
+  App.partnerNick = msg.hostNick;
+  App.myRole = msg.guestRole;
+  App.game = newGameState(msg.diff, msg.seed);
+  showGame();
+  toast('success', '已加入房間，遊戲開始！');
+  syncUI();
+}
+
+// Commander → Pathfinder: word
+function onCommand(msg) {
+  if (App.myRole !== 'pathfinder') return;
+  App.game.pendingWord = msg.word;
+  App.game.phase = 'placing';
+  syncUI();
+}
+
+// Pathfinder → Commander: place result (host will compute, broadcast back)
+function onPlace(msg) {
+  if (!App.isHost) return;
+  applyPlacement(msg.cellId, msg.word);
+}
+
+function onResult(msg) {
+  // Guest receives authoritative result
+  if (App.isHost) return;
+  applyResultFromHost(msg);
+}
+
+function onRefuse(msg) {
+  if (App.myRole !== 'commander') return;
+  toast('warn', `${App.partnerNick} 拒絕了你的指令`);
+  App.game.pendingWord = null;
+  App.game.phase = 'commanding';
+  App.game.usedWords.add(msg.word); // mark word as used
+  syncUI();
+}
+
+function onForfeit(msg) {
+  if (App.isHost) {
+    applyForfeit();
+  }
+}
+
+function onHint(msg) {
+  // both see hint result; host broadcasts, guest receives
+  if (App.isHost) return;
+  const cell = App.game.cells[msg.cellId];
+  cell.revealed = true;
+  App.game.hintsUsed++;
+  App.game.synergyPoints -= 3;
+  logLine(`指令者使用提示，揭開格 #${msg.cellId} (${colorName(cell.color)})`);
+  syncUI();
+}
+
+function onSyncReq(msg) {
+  // Host responds with full state
+  if (!App.isHost) return;
+  publish('sync-resp', serializeGame());
+}
+
+function onSyncResp(msg) {
+  if (App.isHost) return;
+  deserializeGame(msg);
+  syncUI();
+}
+
+function onEnd(msg) {
+  showEndModal(msg.win, msg);
+}
+
+// ===========================================================================
+// 8) Game Logic (Authoritative - runs on host)
+// ===========================================================================
+function applyPlacement(cellId, word) {
+  const g = App.game;
+  const cell = g.cells[cellId];
+
+  // 統一驗證（host 為權威端，避免 client 繞過規則）
+  const check = canPlaceInCell(cellId, word);
+  if (!check.ok) {
+    console.warn('[host] reject placement:', check.reason);
+    return;
+  }
+
+  // Write
+  cell.word = word;
+  cell.revealed = true;
+  g.pendingWord = null;
+  g.usedWords.add(word);
+  g.turnsRemaining--;
+
+  // Score
+  const delta = COLOR_SCORE[cell.color];
+  g.score += delta;
+
+  // Combo
+  if (delta > 0) {
+    g.comboCount++;
+    if (g.comboCount > g.bestCombo) g.bestCombo = g.comboCount;
+    if (g.comboCount >= 3) {
+      g.score++;
+      g.comboCount = 0;
+      logLine(`🔥 連擊獎勵 +1`);
+    }
+  } else {
+    g.comboCount = 0;
+  }
+
+  // Synergy
+  if (delta > 0) g.synergyPoints = Math.min(99, g.synergyPoints + 1);
+
+  // Phase
+  g.phase = 'commanding';
+  g.lastEvent = { type: 'place', cellId, word, color: cell.color, delta };
+
+  logLine(`📍 寫入 #${cellId}「${word}」→ ${colorName(cell.color)} (${formatDelta(delta)})`);
+
+  // Broadcast result
+  publish('result', serializeGame());
+
+  // Check end
+  checkEnd();
+  syncUI();
+}
+
+function applyForfeit() {
+  const g = App.game;
+  g.turnsRemaining--;
+  if (g.pendingWord) g.usedWords.add(g.pendingWord);
+  g.pendingWord = null;
+  g.comboCount = 0;
+  g.phase = 'commanding';
+  g.lastEvent = { type: 'forfeit' };
+  logLine(`⚠️ 流局，消耗 1 回合`);
+  publish('result', serializeGame());
+  checkEnd();
+  syncUI();
+}
+
+function applyResultFromHost(state) {
+  // Replace entire game state from authoritative source
+  deserializeGame(state);
+  if (App.game.lastEvent) {
+    const e = App.game.lastEvent;
+    if (e.type === 'place') {
+      logLine(`📍 寫入 #${e.cellId}「${e.word}」→ ${colorName(e.color)} (${formatDelta(e.delta)})`);
+    } else if (e.type === 'forfeit') {
+      logLine(`⚠️ 流局，消耗 1 回合`);
+    }
+  }
+  syncUI();
+}
+
+function checkEnd() {
+  const g = App.game;
+  if (g.score >= g.target) {
+    g.phase = 'ended';
+    publish('end', { win: true, ...endStats(true) });
+    showEndModal(true, endStats(true));
+  } else if (g.turnsRemaining <= 0) {
+    g.phase = 'ended';
+    publish('end', { win: false, ...endStats(false) });
+    showEndModal(false, endStats(false));
+  }
+}
+
+function endStats(win) {
+  const g = App.game;
+  const used = g.totalTurns - g.turnsRemaining;
+  const ratio = g.turnsRemaining / g.totalTurns;
+  let rank = 'C';
+  if (win) {
+    if (ratio > 0.6) rank = 'S';
+    else if (ratio > 0.4) rank = 'A';
+    else if (ratio > 0.2) rank = 'B';
+  }
+  return { finalScore: g.score, finalTurns: used, finalCombo: g.bestCombo, rank };
+}
+
+// ===========================================================================
+// 9) Serialization (for state sync)
+// ===========================================================================
+function serializeGame() {
+  const g = App.game;
+  return {
+    diff: g.diff, seed: g.seed,
+    cells: g.cells.map(c => ({
+      id: c.id, q: c.q, r: c.r, color: c.color, neighbors: c.neighbors,
+      isAnchor: c.isAnchor, word: c.word, revealed: c.revealed
+    })),
+    score: g.score, target: g.target,
+    turnsRemaining: g.turnsRemaining, totalTurns: g.totalTurns,
+    comboCount: g.comboCount, bestCombo: g.bestCombo,
+    synergyPoints: g.synergyPoints, hintsUsed: g.hintsUsed,
+    refusalUsed: g.refusalUsed,
+    pendingWord: g.pendingWord,
+    usedWords: [...g.usedWords],
+    phase: g.phase,
+    lastEvent: g.lastEvent
+  };
+}
+
+function deserializeGame(s) {
+  App.game = {
+    ...s,
+    usedWords: new Set(s.usedWords || [])
+  };
+}
+
+// ===========================================================================
+// 10) Character Rule Validation
+// ===========================================================================
+function getForbiddenChars(cellId) {
+  const cell = App.game.cells[cellId];
+  const forbidden = new Set();
+  for (const nId of cell.neighbors) {
+    const n = App.game.cells[nId];
+    if (n.word) for (const ch of n.word) forbidden.add(ch);
+  }
+  return forbidden;
+}
+
+function canPlaceInCell(cellId, word) {
+  const cell = App.game.cells[cellId];
+  if (cell.word) return { ok: false, reason: '此格已寫入詞彙' };
+  // 鄰接規則：必須至少有一個鄰居已寫入詞彙
+  const hasPlacedNeighbor = cell.neighbors.some(nId => App.game.cells[nId].word);
+  if (!hasPlacedNeighbor) return { ok: false, reason: '必須點選鄰近已有詞彙的格子' };
+  // 字元不重複規則
+  const forbidden = getForbiddenChars(cellId);
+  const collisions = [];
+  for (const ch of word) if (forbidden.has(ch)) collisions.push(ch);
+  if (collisions.length > 0) return { ok: false, reason: `禁用字元：${collisions.join('、')}` };
+  return { ok: true };
+}
+
+function hasAnyValidCellForWord(word) {
+  return App.game.cells.some(c => canPlaceInCell(c.id, word).ok);
+}
+
+// ===========================================================================
+// 11) UI Rendering
+// ===========================================================================
+function showGame() {
+  document.getElementById('lobby').classList.add('hidden');
+  document.getElementById('game').classList.remove('hidden');
+}
+
+function syncUI() {
+  if (!App.game) return;
+  renderHexGrid();
+  renderTopBar();
+  renderControls();
+  renderPendingWord();
+  updatePlayerBar();
+}
+
+function renderTopBar() {
+  const g = App.game;
+  document.getElementById('room-code').textContent = App.roomCode;
+  document.getElementById('stat-score').textContent = g.score;
+  document.getElementById('stat-target').textContent = g.target;
+  document.getElementById('stat-turns').textContent = g.turnsRemaining;
+  document.getElementById('stat-syn').textContent = g.synergyPoints;
+  const badge = document.getElementById('role-badge');
+  if (App.myRole === 'commander') { badge.className = 'role-badge commander'; badge.textContent = '指令者'; }
+  else { badge.className = 'role-badge pathfinder'; badge.textContent = '探路者'; }
+}
+
+function renderControls() {
+  const isCmd = App.myRole === 'commander';
+  document.getElementById('commander-controls').style.display = isCmd ? '' : 'none';
+  document.getElementById('pathfinder-controls').style.display = isCmd ? 'none' : '';
+
+  // Commander: enable input only in 'commanding' phase
+  const cmdInput = document.getElementById('cmd-input');
+  const cmdSend = document.getElementById('cmd-send');
+  const hintBtn = document.getElementById('cmd-hint');
+  const phaseOK = App.game.phase === 'commanding';
+  cmdInput.disabled = !phaseOK;
+  cmdSend.disabled = !phaseOK;
+  hintBtn.disabled = App.game.synergyPoints < 3 || App.game.hintsUsed >= 2;
+
+  // Pathfinder
+  const refuseBtn = document.getElementById('pf-refuse');
+  const forfeitBtn = document.getElementById('pf-forfeit');
+  refuseBtn.disabled = App.game.refusalUsed || App.game.phase !== 'placing';
+  forfeitBtn.disabled = App.game.phase !== 'placing';
+}
+
+function renderPendingWord() {
+  const wd = document.getElementById('word-display');
+  if (App.game.pendingWord) {
+    wd.textContent = App.game.pendingWord;
+    wd.classList.remove('empty');
+  } else {
+    if (App.myRole === 'commander') {
+      wd.textContent = App.game.phase === 'commanding' ? '輪到你出題' : '等待回應…';
+    } else {
+      wd.textContent = '等待指令者出題…';
+    }
+    wd.classList.add('empty');
+  }
+}
+
+function updatePlayerBar() {
+  document.getElementById('player-self').textContent = `${App.myNick}（${App.myRole === 'commander' ? '指令者' : '探路者'}）`;
+  const other = document.getElementById('player-other');
+  if (App.partnerNick) {
+    const otherRole = App.myRole === 'commander' ? '探路者' : '指令者';
+    other.textContent = `${App.partnerNick}（${otherRole}）`;
+    other.classList.remove('you');
+  } else {
+    other.textContent = '等待對手加入…';
+  }
+}
+
+function renderHexGrid() {
+  const svg = document.getElementById('hex-grid');
+  svg.innerHTML = '';
+  const SIZE = 42;
+  const W = SIZE * Math.sqrt(3);
+  const H = SIZE * 2;
+  const hexW = W;
+  const hexH = SIZE * 1.5;
+
+  // Compute bounds
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const c of App.game.cells) {
+    const p = axialToPixel(c.q, c.r, SIZE);
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  const padding = SIZE + 10;
+  const offsetX = -minX + padding;
+  const offsetY = -minY + padding;
+  const width = maxX - minX + padding * 2;
+  const height = maxY - minY + padding * 2;
+  svg.setAttribute('width', width);
+  svg.setAttribute('height', height);
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+  const isPathfinder = App.myRole === 'pathfinder';
+
+  // 預先計算「合法點擊格」：必須是空格，且至少有一個鄰居已寫入詞彙
+  const placedCellIds = new Set(App.game.cells.filter(c => c.word).map(c => c.id));
+  const isLegalTarget = (cell) => {
+    if (cell.word) return false;
+    return cell.neighbors.some(nId => placedCellIds.has(nId));
+  };
+
+  for (const cell of App.game.cells) {
+    const p = axialToPixel(cell.q, cell.r, SIZE);
+    const cx = p.x + offsetX;
+    const cy = p.y + offsetY;
+
+    // Determine fill color
+    let fill;
+    let showColorToCmd = App.myRole === 'commander';
+    if (cell.revealed || showColorToCmd) {
+      fill = COLOR_HEX[cell.color] || COLOR_HEX.empty;
+    } else {
+      fill = COLOR_HEX.empty;
+    }
+    // If pathfinder and not revealed → always white
+    if (isPathfinder && !cell.revealed) fill = COLOR_HEX.empty;
+
+    // Hex polygon (pointy-top)
+    const points = [];
+    for (let i = 0; i < 6; i++) {
+      const angle = Math.PI / 180 * (60 * i - 30);
+      points.push(`${cx + SIZE * Math.cos(angle)},${cy + SIZE * Math.sin(angle)}`);
+    }
+
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.classList.add('hex-cell');
+    if (cell.isAnchor) g.classList.add('anchor');
+    if (App.game.lastEvent && App.game.lastEvent.type === 'place' && App.game.lastEvent.cellId === cell.id) {
+      g.classList.add('recent');
+    }
+
+    // Click handler:
+    //   - 探路者 only
+    //   - placing phase only
+    //   - 必須是合法目標（空格 + 至少一個鄰居已寫入詞彙）
+    const clickable = isPathfinder
+      && App.game.phase === 'placing'
+      && App.game.pendingWord
+      && isLegalTarget(cell);
+    if (clickable) {
+      g.classList.add('clickable');
+      g.addEventListener('click', () => attemptPlace(cell.id));
+    }
+
+    const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+    poly.setAttribute('points', points.join(' '));
+    poly.setAttribute('class', 'hex-poly');
+    poly.setAttribute('fill', fill);
+    poly.setAttribute('stroke', '#1a2128');
+    poly.setAttribute('stroke-width', '2');
+    g.appendChild(poly);
+
+    // Word text
+    if (cell.word) {
+      const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      txt.setAttribute('class', 'hex-text');
+      txt.setAttribute('x', cx);
+      txt.setAttribute('y', cy);
+      // Auto-shrink for long words
+      const fs = cell.word.length > 3 ? 11 : 13;
+      txt.setAttribute('font-size', fs);
+      txt.textContent = cell.word;
+      g.appendChild(txt);
+    } else {
+      // 空格不顯示 ID（保持乾淨）
+    }
+
+    // 最近寫入格上方顯示分數浮現
+    if (App.game.lastEvent && App.game.lastEvent.type === 'place' && App.game.lastEvent.cellId === cell.id) {
+      const delta = App.game.lastEvent.delta;
+      const popup = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      popup.setAttribute('class', 'score-popup ' + (delta > 0 ? 'pos' : (delta < 0 ? 'neg' : 'zero')));
+      popup.setAttribute('x', cx);
+      popup.setAttribute('y', cy - SIZE * 0.5);
+      popup.textContent = delta > 0 ? `+${delta}` : (delta < 0 ? `${delta}` : '±0');
+      g.appendChild(popup);
+    }
+
+    svg.appendChild(g);
+  }
+}
+
+// ===========================================================================
+// 13) User Actions
+// ===========================================================================
+function attemptPlace(cellId) {
+  const word = App.game.pendingWord;
+  if (!word) return;
+  const check = canPlaceInCell(cellId, word);
+  if (!check.ok) {
+    toast('error', check.reason);
+    return;
+  }
+  if (App.isHost) {
+    applyPlacement(cellId, word);
+  } else {
+    publish('place', { cellId, word });
+  }
+}
+
+function commanderSend() {
+  if (App.myRole !== 'commander') return;
+  if (App.game.phase !== 'commanding') return;
+  const input = document.getElementById('cmd-input');
+  const word = input.value.trim();
+  if (!word) return;
+  if (word.length > 6) { toast('error', '指令詞不可超過 6 字'); return; }
+  if (App.game.usedWords.has(word)) { toast('error', '此詞已用過'); return; }
+  // Check forbidden semantic chars
+  for (const ch of word) {
+    if (FORBIDDEN_CHARS.has(ch)) {
+      toast('error', `禁止使用「${ch}」（方向/顏色/位置/洩漏類詞彙）`);
+      return;
+    }
+  }
+  // Check anchors (cannot re-use anchor word)
+  for (const c of App.game.cells) {
+    if (c.word === word) { toast('error', '與已寫入詞重複'); return; }
+  }
+  App.game.pendingWord = word;
+  App.game.phase = 'placing';
+  input.value = '';
+  publish('command', { word });
+  syncUI();
+}
+
+function commanderUseHint() {
+  if (App.myRole !== 'commander') return;
+  if (App.game.synergyPoints < 3 || App.game.hintsUsed >= 2) return;
+  // 揭格策略：優先揭開「鄰接已寫入格」的加分格（探路者下一回合就能直接點到）
+  const placed = new Set(App.game.cells.filter(c => c.word).map(c => c.id));
+  const isAdjacent = (c) => c.neighbors.some(nId => placed.has(nId));
+  const allUnrevealed = App.game.cells.filter(c => !c.revealed && (c.color === 'green' || c.color === 'yellow'));
+  let candidates = allUnrevealed.filter(isAdjacent);
+  if (candidates.length === 0) candidates = allUnrevealed; // fallback
+  if (candidates.length === 0) {
+    toast('warn', '沒有可揭開的加分格');
+    return;
+  }
+  const pick = candidates[Math.floor(Math.random() * candidates.length)];
+  pick.revealed = true;
+  App.game.synergyPoints -= 3;
+  App.game.hintsUsed++;
+  logLine(`💡 提示：揭開格 #${pick.id} (${colorName(pick.color)})`);
+  publish('hint', { cellId: pick.id });
+  syncUI();
+}
+
+function pathfinderRefuse() {
+  if (App.myRole !== 'pathfinder') return;
+  if (App.game.refusalUsed || App.game.phase !== 'placing') return;
+  if (!App.game.pendingWord) return;
+  const refusedWord = App.game.pendingWord;
+  App.game.refusalUsed = true;
+  App.game.pendingWord = null;
+  App.game.phase = 'commanding';
+  App.game.usedWords.add(refusedWord);
+  publish('refuse', { word: refusedWord });
+  logLine(`🚫 你拒絕了指令「${refusedWord}」`);
+  syncUI();
+}
+
+function pathfinderForfeit() {
+  if (App.myRole !== 'pathfinder') return;
+  if (App.game.phase !== 'placing') return;
+  if (!confirm('確定要宣告流局？將消耗 1 回合。')) return;
+  if (App.isHost) {
+    applyForfeit();
+  } else {
+    publish('forfeit', {});
+  }
+}
+
+// ===========================================================================
+// 14) Helpers / Logging / Toast
+// ===========================================================================
+function logLine(text) {
+  const list = document.getElementById('log-list');
+  const li = document.createElement('li');
+  const t = new Date();
+  const hh = String(t.getHours()).padStart(2, '0');
+  const mm = String(t.getMinutes()).padStart(2, '0');
+  li.innerHTML = `<span class="log-time">${hh}:${mm}</span>${text}`;
+  list.insertBefore(li, list.firstChild);
+  // Cap at 30
+  while (list.children.length > 30) list.removeChild(list.lastChild);
+}
+
+function colorName(c) {
+  return { blue: '藍', gray: '灰', yellow: '黃', green: '綠' }[c] || c;
+}
+
+function formatDelta(d) {
+  if (d > 0) return `<span class="log-score-pos">+${d}</span>`;
+  if (d < 0) return `<span class="log-score-neg">${d}</span>`;
+  return `<span class="log-score-zero">0</span>`;
+}
+
+function toast(type, msg) {
+  const zone = document.getElementById('toast-zone');
+  const div = document.createElement('div');
+  div.className = 'toast ' + type;
+  div.textContent = msg;
+  zone.appendChild(div);
+  setTimeout(() => div.remove(), 2800);
+}
+
+function setConnStatus(state, text) {
+  const dot = document.getElementById('conn-dot');
+  const txt = document.getElementById('conn-text');
+  dot.className = 'status-dot ' + state;
+  txt.textContent = text;
+  // Mirror to game footer too
+  const gDot = document.getElementById('game-conn-dot');
+  const gTxt = document.getElementById('game-conn-text');
+  if (gDot) gDot.className = 'status-dot ' + state;
+  if (gTxt) gTxt.textContent = text === '已連線到 broker' ? '已連線' : text;
+}
+
+function showEndModal(win, stats) {
+  const m = document.getElementById('modal');
+  const t = document.getElementById('modal-title');
+  const msg = document.getElementById('modal-msg');
+  if (win) {
+    t.className = 'modal-title win';
+    t.textContent = '🎉 通關成功';
+    msg.textContent = '默契達成！合作勝利！';
+  } else {
+    t.className = 'modal-title lose';
+    t.textContent = '挑戰失敗';
+    msg.textContent = '再接再厲，下一場一定行。';
+  }
+  document.getElementById('final-score').textContent = stats.finalScore ?? App.game.score;
+  document.getElementById('final-turns').textContent = stats.finalTurns ?? (App.game.totalTurns - App.game.turnsRemaining);
+  document.getElementById('final-combo').textContent = stats.finalCombo ?? App.game.bestCombo;
+  document.getElementById('final-rank').textContent = stats.rank ?? '-';
+  m.classList.remove('hidden');
+}
+
+// ===========================================================================
+// 15) Room Code Generation
+// ===========================================================================
+function genRoomCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
+// ===========================================================================
+// 16) Lobby Wiring
+// ===========================================================================
+document.querySelectorAll('.tab-btn').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    document.getElementById('tab-create').style.display = b.dataset.tab === 'create' ? '' : 'none';
+    document.getElementById('tab-join').style.display = b.dataset.tab === 'join' ? '' : 'none';
+  });
+});
+
+document.getElementById('btn-create').addEventListener('click', () => {
+  const nick = document.getElementById('create-nick').value.trim();
+  if (!nick) { toast('error', '請輸入暱稱'); return; }
+  const diff = document.getElementById('create-diff').value;
+  const role = document.getElementById('create-role').value;
+  App.myNick = nick;
+  App.myRole = role;
+  App.isHost = true;
+  App.roomCode = genRoomCode();
+  const seed = Math.floor(Math.random() * 1e9);
+  App.game = newGameState(diff, seed);
+
+  connectMqtt(() => {
+    subscribeRoom();
+    showGame();
+    syncUI();
+    toast('success', `房間建立：${App.roomCode}，分享代碼給對手吧`);
+    logLine(`🏠 房間 ${App.roomCode} 已建立（${diff}）`);
+  });
+});
+
+document.getElementById('btn-join').addEventListener('click', () => {
+  const nick = document.getElementById('join-nick').value.trim();
+  const code = document.getElementById('join-code').value.trim().toUpperCase();
+  if (!nick) { toast('error', '請輸入暱稱'); return; }
+  if (code.length !== 4) { toast('error', '房間代碼為 4 碼'); return; }
+  App.myNick = nick;
+  App.isHost = false;
+  App.roomCode = code;
+
+  connectMqtt(() => {
+    subscribeRoom();
+    // small delay to ensure subscription is active before publishing
+    setTimeout(() => {
+      publish('join', { nick });
+      toast('warn', '已送出加入請求，等待 host 回應…');
+    }, 500);
+  });
+});
+
+document.getElementById('cmd-send').addEventListener('click', commanderSend);
+document.getElementById('cmd-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') commanderSend();
+});
+document.getElementById('cmd-hint').addEventListener('click', commanderUseHint);
+document.getElementById('pf-refuse').addEventListener('click', pathfinderRefuse);
+document.getElementById('pf-forfeit').addEventListener('click', pathfinderForfeit);
+document.getElementById('modal-restart').addEventListener('click', () => location.reload());
+
+// Auto-uppercase room code input
+document.getElementById('join-code').addEventListener('input', (e) => {
+  e.target.value = e.target.value.toUpperCase();
+});
+
+console.log('Word Compass v1.0 ready. ClientId:', App.myId);
+</script>
+</body>
+</html>
