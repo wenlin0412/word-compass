@@ -313,11 +313,13 @@
 
   .map-zone {
     position: relative;
-    overflow: auto;
+    overflow: hidden;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 20px;
+    padding: 12px;
+    min-height: 0;
+    min-width: 0;
   }
 
   .side-panel {
@@ -328,13 +330,16 @@
     overflow: hidden;
   }
 
-  /* Hex Map */
+  /* Hex Map - 自動縮放至 map-zone 大小 */
   .hex-grid {
-    position: relative;
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+    max-height: 100%;
+    display: block;
   }
 
   .hex-cell {
-    position: absolute;
     cursor: default;
     transition: transform 0.15s;
   }
@@ -610,8 +615,35 @@
   }
 
   @media (max-width: 900px) {
-    .stage { grid-template-columns: 1fr; }
-    .side-panel { border-left: none; border-top: 1px solid var(--border); max-height: 40vh; }
+    .stage {
+      grid-template-columns: 1fr;
+      grid-template-rows: 1fr auto;
+    }
+    .map-zone {
+      min-height: 50vh;
+      padding: 8px;
+    }
+    .side-panel {
+      border-left: none;
+      border-top: 1px solid var(--border);
+      max-height: 45vh;
+    }
+    .top-bar {
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 8px 12px;
+    }
+    .stat-pill { padding: 4px 10px; font-size: 11px; }
+    .brand { font-size: 16px; letter-spacing: 2px; }
+  }
+
+  /* 小螢幕（< 480px）進一步壓縮 */
+  @media (max-width: 480px) {
+    .top-bar { font-size: 11px; }
+    .room-info { font-size: 11px; padding: 3px 8px; }
+    .role-badge { padding: 4px 10px; font-size: 11px; letter-spacing: 1px; }
+    .panel-section { padding: 12px 14px; }
+    .word-display { font-size: 20px; min-height: 56px; padding: 12px; }
   }
 </style>
 </head>
@@ -724,7 +756,7 @@
         </div>
       </div>
 
-      <div class="panel-section flex-grow">
+      <div id="log-section" class="panel-section flex-grow">
         <div class="panel-title">紀錄</div>
         <ul id="log-list" class="log-list"></ul>
       </div>
@@ -1301,8 +1333,9 @@ function deserializeGame(s) {
 }
 
 // ===========================================================================
-// 10) Character Rule Validation
+// 10) Placement Validation
 // ===========================================================================
+// 保留 getForbiddenChars 給未來「指令者出題輔助提示」功能使用
 function getForbiddenChars(cellId) {
   const cell = App.game.cells[cellId];
   const forbidden = new Set();
@@ -1319,16 +1352,8 @@ function canPlaceInCell(cellId, word) {
   // 鄰接規則：必須至少有一個鄰居已寫入詞彙
   const hasPlacedNeighbor = cell.neighbors.some(nId => App.game.cells[nId].word);
   if (!hasPlacedNeighbor) return { ok: false, reason: '必須點選鄰近已有詞彙的格子' };
-  // 字元不重複規則
-  const forbidden = getForbiddenChars(cellId);
-  const collisions = [];
-  for (const ch of word) if (forbidden.has(ch)) collisions.push(ch);
-  if (collisions.length > 0) return { ok: false, reason: `禁用字元：${collisions.join('、')}` };
+  // 字元不重複規則由指令者出題時自行斟酌，探路者寫入時不再強制檢查
   return { ok: true };
-}
-
-function hasAnyValidCellForWord(word) {
-  return App.game.cells.some(c => canPlaceInCell(c.id, word).ok);
 }
 
 // ===========================================================================
@@ -1364,6 +1389,8 @@ function renderControls() {
   const isCmd = App.myRole === 'commander';
   document.getElementById('commander-controls').style.display = isCmd ? '' : 'none';
   document.getElementById('pathfinder-controls').style.display = isCmd ? 'none' : '';
+  // 探路者不顯示「紀錄」區塊
+  document.getElementById('log-section').style.display = isCmd ? '' : 'none';
 
   // Commander: enable input only in 'commanding' phase
   const cmdInput = document.getElementById('cmd-input');
@@ -1412,10 +1439,6 @@ function renderHexGrid() {
   const svg = document.getElementById('hex-grid');
   svg.innerHTML = '';
   const SIZE = 42;
-  const W = SIZE * Math.sqrt(3);
-  const H = SIZE * 2;
-  const hexW = W;
-  const hexH = SIZE * 1.5;
 
   // Compute bounds
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -1431,9 +1454,11 @@ function renderHexGrid() {
   const offsetY = -minY + padding;
   const width = maxX - minX + padding * 2;
   const height = maxY - minY + padding * 2;
-  svg.setAttribute('width', width);
-  svg.setAttribute('height', height);
+  // 使用 viewBox + preserveAspectRatio，讓 SVG 隨容器自動等比縮放
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  svg.removeAttribute('width');
+  svg.removeAttribute('height');
 
   const isPathfinder = App.myRole === 'pathfinder';
 
