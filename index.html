@@ -384,8 +384,11 @@
 
   @media (max-width: 900px) {
     .stage { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
-    .map-zone { min-height: 55vh; padding: 10px; }
-    .side-panel { border-left: none; border-top: 2px solid var(--border); max-height: 40vh; }
+    .map-zone { min-height: 50vh; padding: 10px; overflow: auto; -webkit-overflow-scrolling: touch; }
+    .side-panel { border-left: none; border-top: 2px solid var(--border); max-height: 45vh; overflow: auto; }
+    .hex-grid { width: 100%; height: auto; max-width: 100%; }
+    /* Ensure forms are visible and not clipped on small screens */
+    .panel-section { padding: 14px; }
   }
 </style>
 </head>
@@ -463,7 +466,7 @@
             <feComposite in="SourceGraphic" in2="blur" operator="over" />
           </filter>
         </defs>
-      </svg>
+        </svg>
     </div>
 
     <div class="side-panel">
@@ -1096,6 +1099,15 @@ function canPlaceInCell(cellId, word) {
 function showGame() {
   document.getElementById('lobby').classList.add('hidden');
   document.getElementById('game').classList.remove('hidden');
+  // On small screens, ensure commander input is visible
+  setTimeout(() => {
+    try {
+      if (window.innerWidth <= 900 && App.myRole === 'commander') {
+        const inp = document.getElementById('cmd-input');
+        if (inp) { inp.focus(); inp.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+      }
+    } catch (e) { console.warn('showGame scroll/focus failed', e); }
+  }, 120);
 }
 
 function syncUI() {
@@ -1211,6 +1223,10 @@ function renderHexGrid() {
   const offsetY = -minY + padding;
   svg.setAttribute('viewBox', `0 0 ${maxX - minX + padding * 2} ${maxY - minY + padding * 2}`);
   svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  // Make SVG responsive in layout: let CSS control displayed size on small screens
+  svg.style.width = '100%';
+  svg.style.height = 'auto';
+  svg.style.maxWidth = '100%';
 
   const isPathfinder = App.myRole === 'pathfinder';
   const placedCellIds = new Set(App.game.cells.filter(c => c.word).map(c => c.id));
@@ -1250,7 +1266,7 @@ function renderHexGrid() {
     g.classList.add('hex-cell');
     if (cell.isAnchor) g.classList.add('anchor');
 
-    const isRecent = App.game.lastEvent && App.game.lastEvent.type === 'place' && App.game.lastEvent.cellId === cell.id;
+    const isRecent = App.game.lastEvent && App.game.lastEvent.type === 'place' && App.game.lastEvent.cellId === cell.id && App.game.phase !== 'placing';
     if (isRecent) g.classList.add('recent');
 
     const clickable = isPathfinder && App.game.phase === 'placing' && App.game.pendingWord && isLegalTarget(cell);
