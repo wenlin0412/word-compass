@@ -260,7 +260,8 @@
   .hex-cell { cursor: default; transition: transform 0.1s; }
   .hex-cell.clickable { cursor: pointer; }
   
-  .hex-cell.clickable:hover .hex-poly {
+  /* 可點擊格子的hover光暈效果 */
+  .hex-cell.hover-fx .hex-poly {
     filter: drop-shadow(0 0 15px var(--accent)) drop-shadow(0 0 25px rgba(94, 234, 212, 0.7));
     stroke: #fff;
     stroke-width: 4;
@@ -448,6 +449,7 @@
     <div class="brand">COMPASS</div>
     <div class="room-info">ROOM <span id="room-code">----</span></div>
     <div class="stat-pill score"><span class="label">積分</span><span class="value"><span id="stat-score">0</span> / <span id="stat-target">8</span></span></div>
+    <div class="stat-pill"><span class="label">默契</span><span class="value" id="stat-syn">0</span></div>
     <div class="stat-pill turns"><span class="label">回合</span><span class="value"><span id="stat-turns">15</span></span></div>
     <div id="role-badge" class="role-badge"></div>
   </div>
@@ -467,19 +469,24 @@
     <div class="side-panel">
       <div class="panel-section">
         <div class="panel-title">當前指令</div>
-        <div id="word-display" class="word-display empty">等待指令者出題…</div>
+        <div id="word-display" class="word-display empty">等待中...</div>
       </div>
 
       <div id="commander-controls" class="panel-section" style="display:none">
+        <div class="panel-title">指令控制</div>
         <div class="input-row">
           <input id="cmd-input" class="form-input" maxlength="6" placeholder="輸入指令詞..." />
           <button id="cmd-send" class="btn btn-primary">送出</button>
         </div>
+        <div class="action-row">
+          <button id="cmd-hint" class="btn btn-block" style="grid-column: span 2;">使用提示 (需 3 點默契)</button>
+        </div>
       </div>
 
       <div id="pathfinder-controls" class="panel-section" style="display:none">
+        <div class="panel-title">行動操作</div>
         <div class="action-row">
-          <button id="pf-refuse" class="btn">拒絕指令(限1次)</button>
+          <button id="pf-refuse" class="btn">拒絕指令</button>
           <button id="pf-forfeit" class="btn">宣告流局</button>
         </div>
       </div>
@@ -496,6 +503,7 @@
       </div>
 
       <div id="log-section" class="panel-section flex-grow">
+        <div class="panel-title">戰報紀錄</div>
         <ul id="log-list" class="log-list"></ul>
       </div>
     </div>
@@ -857,9 +865,11 @@ function onInit(msg) {
 
 // Commander → Pathfinder: word
 function onCommand(msg) {
+  console.log('[onCommand] 收到指令詞:', msg.word, '當前角色:', App.myRole);
   if (App.myRole !== 'pathfinder') return;
   App.game.pendingWord = msg.word;
   App.game.phase = 'placing';
+  console.log('[onCommand] 已設定 pendingWord, phase=placing, 即將 syncUI');
   syncUI();
 }
 
@@ -1110,26 +1120,41 @@ function renderTopBar() {
 }
 
 function renderControls() {
+  if (!App.game) return;
+  
   const isCmd = App.myRole === 'commander';
+  const phase = App.game.phase;
+
+  // 1. 控制區塊的顯示/隱藏
   document.getElementById('commander-controls').style.display = isCmd ? '' : 'none';
   document.getElementById('pathfinder-controls').style.display = isCmd ? 'none' : '';
-  // 探路者不顯示「紀錄」區塊
-  document.getElementById('log-section').style.display = isCmd ? '' : 'none';
 
-  // Commander: enable input only in 'commanding' phase
-  const cmdInput = document.getElementById('cmd-input');
-  const cmdSend = document.getElementById('cmd-send');
-  const hintBtn = document.getElementById('cmd-hint');
-  const phaseOK = App.game.phase === 'commanding';
-  cmdInput.disabled = !phaseOK;
-  cmdSend.disabled = !phaseOK;
-  hintBtn.disabled = App.game.synergyPoints < 3 || App.game.hintsUsed >= 2;
+  // 2. 指令者控制項狀態
+  if (isCmd) {
+    const cmdInput = document.getElementById('cmd-input');
+    const cmdSend = document.getElementById('cmd-send');
+    const hintBtn = document.getElementById('cmd-hint');
+    
+    // 只有在出題階段 (commanding) 才能打字送出
+    const canCommand = (phase === 'commanding');
+    cmdInput.disabled = !canCommand;
+    cmdSend.disabled = !canCommand;
+    
+    // 提示按鈕邏輯：默契點數夠且次數未達上限
+    hintBtn.disabled = App.game.synergyPoints < 3 || App.game.hintsUsed >= 2;
+    hintBtn.textContent = `使用提示 (${App.game.hintsUsed}/2)`;
+  }
 
-  // Pathfinder
-  const refuseBtn = document.getElementById('pf-refuse');
-  const forfeitBtn = document.getElementById('pf-forfeit');
-  refuseBtn.disabled = App.game.refusalUsed || App.game.phase !== 'placing';
-  forfeitBtn.disabled = App.game.phase !== 'placing';
+  // 3. 探路者控制項狀態
+  if (!isCmd) {
+    const refuseBtn = document.getElementById('pf-refuse');
+    const forfeitBtn = document.getElementById('pf-forfeit');
+    
+    // 只有在收到指令後 (placing) 才能操作
+    const canAct = (phase === 'placing');
+    refuseBtn.disabled = !canAct || App.game.refusalUsed;
+    forfeitBtn.disabled = !canAct;
+  }
 }
 
 function renderPendingWord() {
@@ -1161,7 +1186,7 @@ function updatePlayerBar() {
 
 function renderHexGrid() {
   const svg = document.getElementById('hex-grid');
-  // 保留原有的 defs (如 glow-green 濾鏡)
+  // 保留發光濾鏡
   const defsStr = `<defs>
     <filter id="glow-green" x="-30%" y="-30%" width="160%" height="160%">
       <feGaussianBlur stdDeviation="4" result="blur" />
@@ -1170,15 +1195,18 @@ function renderHexGrid() {
   </defs>`;
   svg.innerHTML = defsStr;
   
-  const SIZE = 48; // 放大的 Hexagon
+  // 【修改點 1】分離排版間距與實際繪圖大小
+  const SPACING_SIZE = 48; // 用於計算相鄰格子的中心點距離
+  const DRAW_SIZE = 45;    // 實際繪製的六角形半徑 (稍微縮小，製造出邊框間隙)
 
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const c of App.game.cells) {
-    const p = axialToPixel(c.q, c.r, SIZE);
+    const p = axialToPixel(c.q, c.r, SPACING_SIZE);
     if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y;
     if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y;
   }
-  const padding = SIZE + 20;
+  
+  const padding = SPACING_SIZE + 20;
   const offsetX = -minX + padding;
   const offsetY = -minY + padding;
   svg.setAttribute('viewBox', `0 0 ${maxX - minX + padding * 2} ${maxY - minY + padding * 2}`);
@@ -1191,8 +1219,14 @@ function renderHexGrid() {
     return cell.neighbors.some(nId => placedCellIds.has(nId));
   };
 
+  // 除錯用：列出可點擊格子
+  if (isPathfinder && App.game.phase === 'placing' && App.game.pendingWord) {
+    const legalIds = App.game.cells.filter(c => isLegalTarget(c)).map(c => c.id + 1);
+    console.log('[hex] 探路者可點擊格子:', legalIds.join(', '), '(共', legalIds.length, '格)');
+  }
+
   for (const cell of App.game.cells) {
-    const p = axialToPixel(cell.q, cell.r, SIZE);
+    const p = axialToPixel(cell.q, cell.r, SPACING_SIZE);
     const cx = p.x + offsetX;
     const cy = p.y + offsetY;
 
@@ -1207,60 +1241,74 @@ function renderHexGrid() {
 
     const points = [];
     for (let i = 0; i < 6; i++) {
-      const angle = Math.PI / 180 * (60 * i - 30); // 尖端朝上 (Pointy-top)
-      points.push(`${cx + SIZE * Math.cos(angle)},${cy + SIZE * Math.sin(angle)}`);
+      const angle = Math.PI / 180 * (60 * i - 30);
+      points.push(`${cx + DRAW_SIZE * Math.cos(angle)},${cy + DRAW_SIZE * Math.sin(angle)}`);
     }
+    const pointsStr = points.join(' ');
 
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     g.classList.add('hex-cell');
     if (cell.isAnchor) g.classList.add('anchor');
-    if (App.game.lastEvent && App.game.lastEvent.type === 'place' && App.game.lastEvent.cellId === cell.id) g.classList.add('recent');
+
+    const isRecent = App.game.lastEvent && App.game.lastEvent.type === 'place' && App.game.lastEvent.cellId === cell.id;
+    if (isRecent) g.classList.add('recent');
 
     const clickable = isPathfinder && App.game.phase === 'placing' && App.game.pendingWord && isLegalTarget(cell);
-    if (clickable) {
-      g.classList.add('clickable');
-      g.addEventListener('click', () => attemptPlace(cell.id));
-    }
 
-    // 繪製六角形本體 (加入圖片風格的粗框線)
+    // === 視覺六角形 ===
     const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-    poly.setAttribute('points', points.join(' '));
+    poly.setAttribute('points', pointsStr);
     poly.setAttribute('class', 'hex-poly');
     poly.setAttribute('fill', fill);
-    poly.setAttribute('stroke', '#3a4454'); // 厚實的金屬深灰框
+    poly.setAttribute('stroke', '#3a4454');
     poly.setAttribute('stroke-width', '4');
-    
-    // 如果是綠色且已解鎖(或指令者視角)，加上發光濾鏡
-    if (fill === COLOR_HEX.green) {
-      poly.setAttribute('filter', 'url(#glow-green)');
-    }
+    poly.setAttribute('pointer-events', clickable ? 'all' : 'none');  // 可點擊時接收事件
+    if (fill === COLOR_HEX.green) poly.setAttribute('filter', 'url(#glow-green)');
     g.appendChild(poly);
+    
+    // 可點擊格子直接在 poly 上綁定點擊事件（v1驗證過的做法，比 hit-box 更可靠）
+    if (clickable) {
+      poly.style.cursor = 'pointer';
+      poly.addEventListener('click', (e) => {
+        console.log('[click] cell', cell.id + 1, 'phase=', App.game.phase, 'pendingWord=', App.game.pendingWord);
+        e.stopPropagation();
+        attemptPlace(cell.id);
+      });
+      // Hover光暈效果
+      poly.addEventListener('mouseenter', () => {
+        g.classList.add('hover-fx');
+      });
+      poly.addEventListener('mouseleave', () => {
+        g.classList.remove('hover-fx');
+      });
+    }
 
-    // 繪製頂部編號 (對應圖片的設計，數字在上方)
+    // === 格子編號 ===
     const numTxt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     numTxt.setAttribute('class', `hex-id ${cell.word ? 'revealed' : ''}`);
     numTxt.setAttribute('x', cx);
-    numTxt.setAttribute('y', cy - SIZE * 0.55); 
-    numTxt.textContent = cell.id + 1; // 從1開始編號
+    numTxt.setAttribute('y', cy - DRAW_SIZE * 0.55);
+    numTxt.setAttribute('pointer-events', 'none');
+    numTxt.textContent = cell.id + 1;
     g.appendChild(numTxt);
 
+    // === 文字 / 球網裝飾 ===
     if (cell.word) {
-      // 翻開後顯示文字 (置中，粗體)
       const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       txt.setAttribute('class', 'hex-text');
       txt.setAttribute('x', cx);
       txt.setAttribute('y', cy + 4);
       txt.setAttribute('font-size', cell.word.length > 3 ? 14 : 18);
+      txt.setAttribute('pointer-events', 'none');
       txt.textContent = cell.word;
       g.appendChild(txt);
     } else {
-      // 未翻開時顯示中間的小足球網圖示 (模擬圖中背景線條)
       const netIcon = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       netIcon.setAttribute('transform', `translate(${cx}, ${cy+4})`);
-      netIcon.setAttribute('stroke', 'rgba(255, 255, 255, 0.5)');
+      netIcon.setAttribute('stroke', 'rgba(255, 255, 255, 0.4)');
       netIcon.setAttribute('stroke-width', '1.5');
       netIcon.setAttribute('fill', 'none');
-      // 畫一個梯形網子
+      netIcon.setAttribute('pointer-events', 'none');
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', 'M-12,-6 L12,-6 L16,10 L-16,10 Z');
       const l1 = document.createElementNS('http://www.w3.org/2000/svg', 'line'); l1.setAttribute('x1','-6'); l1.setAttribute('y1','-6'); l1.setAttribute('x2','-8'); l1.setAttribute('y2','10');
@@ -1271,33 +1319,48 @@ function renderHexGrid() {
       g.appendChild(netIcon);
     }
 
-    if (App.game.lastEvent && App.game.lastEvent.type === 'place' && App.game.lastEvent.cellId === cell.id) {
+    // === 分數浮動文字 ===
+    if (isRecent) {
       const delta = App.game.lastEvent.delta;
       const popup = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       popup.setAttribute('class', 'score-popup ' + (delta > 0 ? 'pos' : (delta < 0 ? 'neg' : 'zero')));
       popup.setAttribute('x', cx);
-      popup.setAttribute('y', cy - SIZE * 0.4);
+      popup.setAttribute('y', cy - DRAW_SIZE * 0.4);
+      popup.setAttribute('pointer-events', 'none');
       popup.textContent = delta > 0 ? `+${delta}` : (delta < 0 ? `${delta}` : '±0');
       g.appendChild(popup);
     }
-
+    
     svg.appendChild(g);
   }
+
+  console.log('[hex] 渲染完成，視覺格', App.game.cells.length, '個');
 }
+
 // ===========================================================================
 // 13) User Actions
 // ===========================================================================
 function attemptPlace(cellId) {
+  console.log('[attemptPlace] cellId=', cellId, 'isHost=', App.isHost, 'phase=', App.game.phase, 'pendingWord=', App.game.pendingWord);
   const word = App.game.pendingWord;
-  if (!word) return;
+  if (!word) {
+    console.warn('[attemptPlace] 沒有 pendingWord，動作中止');
+    return;
+  }
   const check = canPlaceInCell(cellId, word);
+  console.log('[attemptPlace] 驗證結果:', check);
   if (!check.ok) {
     toast('error', check.reason);
     return;
   }
   if (App.isHost) {
+    console.log('[attemptPlace] 走 host 端寫入流程');
     applyPlacement(cellId, word);
   } else {
+    console.log('[attemptPlace] 走 guest 端送出 publish');
+    App.game.phase = 'resolving';
+    syncUI();
+    toast('success', `已送出選擇 #${cellId + 1}，等待結算…`);
     publish('place', { cellId, word });
   }
 }
