@@ -58,6 +58,7 @@
 
   html, body {
     height: 100%;
+    max-width: 100%;
     background-color: var(--bg-deep);
     color: var(--text-primary);
     font-family: var(--font-body);
@@ -222,6 +223,7 @@
     display: grid;
     grid-template-rows: auto 1fr auto;
     height: 100vh;
+    height: 100dvh; /* 動態視口高度，修正 iOS Safari 地址欄問題 */
     overflow: hidden;
   }
 
@@ -251,7 +253,7 @@
   .role-badge.pathfinder { background: #45381b; color: var(--hex-yellow); border: 1px solid var(--hex-yellow); }
 
   /* Main Stage */
-  .stage { display: grid; grid-template-columns: 1fr 340px; overflow: hidden; }
+  .stage { display: grid; grid-template-columns: 1fr 340px; overflow: hidden; min-width: 0; }
   .map-zone { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 20px; }
   .side-panel { background: var(--bg-soft); border-left: 2px solid var(--border); display: flex; flex-direction: column; overflow: hidden; backdrop-filter: blur(8px); }
 
@@ -383,12 +385,67 @@
   .toast.warn { border-color: var(--hex-yellow); color: var(--hex-yellow); }
 
   @media (max-width: 900px) {
-    .stage { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
-    .map-zone { min-height: 50vh; padding: 10px; overflow: auto; -webkit-overflow-scrolling: touch; }
-    .side-panel { border-left: none; border-top: 2px solid var(--border); max-height: 45vh; overflow: auto; }
-    .hex-grid { width: 100%; height: auto; max-width: 100%; }
-    /* Ensure forms are visible and not clipped on small screens */
-    .panel-section { padding: 14px; }
+    .stage { grid-template-columns: 1fr; grid-template-rows: 1fr auto; overflow: hidden; }
+
+    /* 地圖區：允許上下左右平移瀏覽，SVG 自動縮放至容器寬度 */
+    .map-zone {
+      min-height: 0;
+      padding: 8px;
+      overflow: auto;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-x pan-y;
+      align-items: flex-start;
+    }
+
+    /* 側邊面板：限高並允許捲動 */
+    .side-panel {
+      border-left: none;
+      border-top: 2px solid var(--border);
+      max-height: 42vh;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    /* 地圖 SVG 縮放至容器寬度 */
+    .hex-grid { width: 100%; height: auto; max-width: 100%; display: block; }
+
+    /* Top Bar：允許換行，縮小字體 */
+    .top-bar {
+      flex-wrap: wrap;
+      padding: 8px 12px;
+      gap: 6px;
+    }
+    .brand { font-size: 15px; letter-spacing: 1px; }
+    .room-info { font-size: 12px; padding: 3px 8px; }
+    .stat-pill { font-size: 11px; padding: 4px 8px; gap: 4px; }
+    .stat-pill .value { font-size: 12px; }
+    .stat-pill.score .value { font-size: 14px; }
+    .role-badge { margin-left: 0; padding: 4px 10px; font-size: 11px; }
+
+    /* Bottom Bar 緊湊 */
+    .bottom-bar { padding: 8px 12px; gap: 8px; font-size: 12px; }
+    .player-tag { font-size: 11px; padding: 4px 8px; }
+
+    /* 表單 padding 縮小 */
+    .panel-section { padding: 12px; }
+  }
+
+  /* 小型手機（≤480px）進一步縮放 */
+  @media (max-width: 480px) {
+    .top-bar { padding: 6px 10px; gap: 4px; }
+    .brand { font-size: 13px; }
+    .room-info { font-size: 11px; padding: 2px 6px; }
+    .stat-pill { padding: 3px 6px; font-size: 10px; gap: 2px; }
+    .stat-pill .label { font-size: 9px; }
+    .stat-pill .value { font-size: 10px; }
+    .stat-pill.score .value { font-size: 12px; }
+    .role-badge { font-size: 10px; padding: 3px 8px; }
+    .panel-section { padding: 10px; }
+    .word-display { font-size: 22px; min-height: 60px; padding: 10px; }
+    .bottom-bar { padding: 6px 10px; font-size: 11px; gap: 6px; }
+    .player-tag { font-size: 10px; padding: 3px 6px; }
+    .input-row .form-input { font-size: 14px; padding: 10px 10px; }
+    .btn { padding: 10px 14px; font-size: 14px; }
   }
 </style>
 </head>
@@ -483,14 +540,6 @@
         </div>
         <div class="action-row">
           <button id="cmd-hint" class="btn btn-block" style="grid-column: span 2;">使用提示 (需 3 點默契)</button>
-        </div>
-      </div>
-
-      <div id="pathfinder-controls" class="panel-section" style="display:none">
-        <div class="panel-title">行動操作</div>
-        <div class="action-row">
-          <button id="pf-refuse" class="btn">拒絕指令</button>
-          <button id="pf-forfeit" class="btn">宣告流局</button>
         </div>
       </div>
 
@@ -1139,7 +1188,6 @@ function renderControls() {
 
   // 1. 控制區塊的顯示/隱藏
   document.getElementById('commander-controls').style.display = isCmd ? '' : 'none';
-  document.getElementById('pathfinder-controls').style.display = isCmd ? 'none' : '';
 
   // 2. 指令者控制項狀態
   if (isCmd) {
@@ -1155,17 +1203,6 @@ function renderControls() {
     // 提示按鈕邏輯：默契點數夠且次數未達上限
     hintBtn.disabled = App.game.synergyPoints < 3 || App.game.hintsUsed >= 2;
     hintBtn.textContent = `使用提示 (${App.game.hintsUsed}/2)`;
-  }
-
-  // 3. 探路者控制項狀態
-  if (!isCmd) {
-    const refuseBtn = document.getElementById('pf-refuse');
-    const forfeitBtn = document.getElementById('pf-forfeit');
-    
-    // 只有在收到指令後 (placing) 才能操作
-    const canAct = (phase === 'placing');
-    refuseBtn.disabled = !canAct || App.game.refusalUsed;
-    forfeitBtn.disabled = !canAct;
   }
 }
 
@@ -1225,7 +1262,7 @@ function renderHexGrid() {
   svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
   // Make SVG responsive in layout: let CSS control displayed size on small screens
   svg.style.width = '100%';
-  svg.style.height = 'auto';
+  svg.style.height = '100%';
   svg.style.maxWidth = '100%';
 
   const isPathfinder = App.myRole === 'pathfinder';
@@ -1587,8 +1624,6 @@ document.getElementById('cmd-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') commanderSend();
 });
 document.getElementById('cmd-hint').addEventListener('click', commanderUseHint);
-document.getElementById('pf-refuse').addEventListener('click', pathfinderRefuse);
-document.getElementById('pf-forfeit').addEventListener('click', pathfinderForfeit);
 document.getElementById('modal-restart').addEventListener('click', () => location.reload());
 
 // Auto-uppercase room code input
