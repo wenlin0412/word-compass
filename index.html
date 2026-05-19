@@ -341,7 +341,7 @@
     font-size: 28px;
     font-weight: 900;
     letter-spacing: 4px;
-    color: #fff;
+    color: #5eead4;
     text-shadow: 0 0 10px rgba(255,255,255,0.4);
     min-height: 72px;
     display: flex; align-items: center; justify-content: center;
@@ -1436,6 +1436,17 @@ function commanderSend() {
   // Check anchors (cannot re-use anchor word)
   for (const c of App.game.cells) {
     if (c.word === word) { toast('error', '與已寫入詞重複'); return; }
+  }
+  // Check if any character in the new word already appears in any placed word on the map
+  const placedChars = new Set();
+  for (const c of App.game.cells) {
+    if (c.word) for (const ch of c.word) placedChars.add(ch);
+  }
+  for (const ch of word) {
+    if (placedChars.has(ch)) {
+      toast('error', `「${ch}」已出現在地圖上的詞彙中，請換詞`);
+      return;
+    }
   }
   App.game.pendingWord = word;
   App.game.phase = 'placing';
